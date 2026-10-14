@@ -1,0 +1,66 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Fraunces", Georgia, "Times New Roman", serif;
+  --color-pine: #0d3b24;
+  --color-pine-2: #145c3a;
+  --color-leaf: #1a7a4c;
+  --color-mint: #e7f5ee;
+  --color-foam: #f4faf6;
+  --color-card: #ffffff;
+  --color-ink: #14241c;
+  --color-muted: #5c6f64;
+  --color-line: #d3e4da;
+  --color-danger: #8c2f2f;
+  --color-danger-bg: #f8e8e6;
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  body {
+    font-family: var(--font-sans);
+    background: var(--color-foam);
+    color: var(--color-ink);
+    text-wrap: pretty;
+  }
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    text-wrap: balance;
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-leaf);
+    outline-offset: 2px;
+  }
+}
+
+@utility field {
+  height: 2.75rem;
+  width: 100%;
+  border-radius: 0.75rem;
+  border: 1px solid var(--color-line);
+  background: var(--color-card);
+  padding-inline: 0.75rem;
+  font-size: 0.875rem;
+  color: var(--color-ink);
+}
+
+@utility field-area {
+  width: 100%;
+  min-height: 6.5rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--color-line);
+  background: var(--color-card);
+  padding: 0.75rem;
+  font-size: 0.875rem;
+  color: var(--color-ink);
+}
