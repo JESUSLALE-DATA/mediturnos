@@ -1,8 +1,16 @@
 @import "tailwindcss";
 
+/* ============================================================
+   Medi-Turnos – tokens base + temas por rol
+   (alineados con tus HTML: rojo secretaría, azul profesional,
+    verde paciente, negro/verde admin)
+   ============================================================ */
+
 @theme {
-  --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
-  --font-display: "Fraunces", Georgia, "Times New Roman", serif;
+  --font-sans: "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-display: "Segoe UI", system-ui, sans-serif;
+
+  /* Defaults (paciente / general verde) */
   --color-pine: #0d3b24;
   --color-pine-2: #145c3a;
   --color-leaf: #1a7a4c;
@@ -12,8 +20,96 @@
   --color-ink: #14241c;
   --color-muted: #5c6f64;
   --color-line: #d3e4da;
-  --color-danger: #8c2f2f;
-  --color-danger-bg: #f8e8e6;
+  --color-danger: #dc2626;
+  --color-danger-bg: #fef2f2;
+  --color-accent: #1a7a4c;
+  --color-accent-soft: #e8f5ee;
+  --color-accent-mid: #b7d4c4;
+  --color-warn: #d97706;
+  --color-warn-bg: #fef3c7;
+  --color-info: #0284c7;
+  --color-info-bg: #e0f2fe;
+  --color-ok: #059669;
+  --color-ok-bg: #d1fae5;
+}
+
+/* --- Secretaría (rojo) --- */
+[data-role="secretaria"] {
+  --color-pine: #750419;
+  --color-pine-2: #991b1b;
+  --color-leaf: #dc2626;
+  --color-mint: #fee2e2;
+  --color-foam: #fff5f5;
+  --color-card: #ffffff;
+  --color-ink: #1a1a1a;
+  --color-muted: #6b5a5a;
+  --color-line: #f5c2c2;
+  --color-accent: #dc2626;
+  --color-accent-soft: #fef2f2;
+  --color-accent-mid: #fecaca;
+}
+
+/* --- Profesional (azul) --- */
+[data-role="profesional"] {
+  --color-pine: #0c4a6e;
+  --color-pine-2: #0369a1;
+  --color-leaf: #0284c7;
+  --color-mint: #e0f2fe;
+  --color-foam: #f0f9ff;
+  --color-card: #ffffff;
+  --color-ink: #0c4a6e;
+  --color-muted: #64748b;
+  --color-line: #bae6fd;
+  --color-accent: #0284c7;
+  --color-accent-soft: #e0f2fe;
+  --color-accent-mid: #7dd3fc;
+}
+
+/* --- Paciente (verde – ya es el default) --- */
+[data-role="paciente"] {
+  --color-pine: #0d3b24;
+  --color-pine-2: #145c3a;
+  --color-leaf: #1a7a4c;
+  --color-mint: #e8f5ee;
+  --color-foam: #f0faf4;
+  --color-card: #ffffff;
+  --color-ink: #1a2e22;
+  --color-muted: #5a6b60;
+  --color-line: #b7d4c4;
+  --color-accent: #1a7a4c;
+  --color-accent-soft: #e8f5ee;
+  --color-accent-mid: #86efac;
+}
+
+/* --- Admin / Master (negro + esmeralda) --- */
+[data-role="admin"] {
+  --color-pine: #111827;
+  --color-pine-2: #1f2937;
+  --color-leaf: #10b981;
+  --color-mint: #d1fae5;
+  --color-foam: #f4f7f5;
+  --color-card: #ffffff;
+  --color-ink: #111827;
+  --color-muted: #5a6b60;
+  --color-line: #b7d4c4;
+  --color-accent: #10b981;
+  --color-accent-soft: #d1fae5;
+  --color-accent-mid: #6ee7b7;
+}
+
+/* --- Modo oscuro (cualquier rol) --- */
+.dark,
+[data-theme="dark"] {
+  --color-foam: #121212;
+  --color-card: #1e1e1e;
+  --color-ink: #e0e0e0;
+  --color-muted: #a1a1aa;
+  --color-line: #333;
+  --color-mint: #2a2340;
+  --color-pine: #c4b5fd;
+  --color-pine-2: #e9d5ff;
+  --color-leaf: #a78bfa;
+  --color-accent-soft: #2a2340;
 }
 
 @layer base {
@@ -27,9 +123,7 @@
     color: var(--color-ink);
     text-wrap: pretty;
   }
-  h1,
-  h2,
-  h3 {
+  h1, h2, h3 {
     font-family: var(--font-display);
     text-wrap: balance;
   }
@@ -63,4 +157,57 @@
   padding: 0.75rem;
   font-size: 0.875rem;
   color: var(--color-ink);
+}
+
+/* Badges de estado (como en HTML) */
+@utility badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  padding: 0.25rem 0.625rem;
+  border-radius: 9999px;
+  white-space: nowrap;
+}
+@utility badge-pendiente {
+  background: var(--color-warn-bg);
+  color: #92400e;
+}
+@utility badge-confirmado {
+  background: var(--color-ok-bg);
+  color: #065f46;
+}
+@utility badge-espera {
+  background: var(--color-info-bg);
+  color: #0c4a6e;
+}
+@utility badge-atendido {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+@utility badge-cancelado {
+  background: var(--color-danger-bg);
+  color: #991b1b;
+}
+@utility badge-nuevo {
+  background: #f59e0b;
+  color: #fff;
+  animation: pulse-nuevo 1.5s ease-in-out 3;
+}
+
+@keyframes pulse-nuevo {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(245, 158, 11, 0); }
+}
+
+/* Banner de turnos nuevos */
+@utility alert-nuevo {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: linear-gradient(135deg, #fef3c7, #fde68a);
+  border: 2px solid #f59e0b;
+  border-radius: 0.75rem;
+  padding: 0.875rem 1.125rem;
+  color: #78350f;
 }

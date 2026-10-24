@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import {
+  BarChart3,
   CalendarDays,
   ClipboardPlus,
   Contact,
@@ -12,6 +13,18 @@ import {
   Users,
   X,
 } from "lucide-react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { authClient } from "@/lib/auth/client";
 import { UserButton } from "@/lib/auth/gates";
 import { Mark } from "@/components/mark";
@@ -46,6 +59,7 @@ type Section =
   | "obras"
   | "historial"
   | "agenda"
+  | "estadisticas"
   | "profesionales"
   | "recetas"
   | "contactos"
@@ -63,24 +77,29 @@ const NAV: Record<Role, Array<{ id: Section; label: string; icon: typeof LayoutD
     { id: "inicio", label: "Inicio", icon: LayoutDashboard },
     { id: "pacientes", label: "Pacientes", icon: Users },
     { id: "turnos", label: "Turnos", icon: CalendarDays },
-    { id: "obras", label: "Obras sociales", icon: ClipboardPlus },
-    { id: "historial", label: "Historial", icon: Stethoscope },
     { id: "agenda", label: "Agenda", icon: CalendarDays },
-    { id: "profesionales", label: "Profesionales", icon: Stethoscope },
+    { id: "estadisticas", label: "Estadísticas", icon: BarChart3 },
+    { id: "historial", label: "Historial clínico", icon: Stethoscope },
+    { id: "obras", label: "Obras sociales", icon: ClipboardPlus },
     { id: "contactos", label: "Contactos", icon: Contact },
+    { id: "profesionales", label: "Profesionales", icon: Stethoscope },
   ],
   profesional: [
     { id: "inicio", label: "Inicio", icon: LayoutDashboard },
     { id: "agenda", label: "Agenda", icon: CalendarDays },
+    { id: "turnos", label: "Turnos", icon: CalendarDays },
+    { id: "estadisticas", label: "Estadísticas", icon: BarChart3 },
     { id: "pacientes", label: "Pacientes", icon: Users },
-    { id: "historial", label: "Historial", icon: Stethoscope },
+    { id: "historial", label: "Historial clínico", icon: Stethoscope },
     { id: "recetas", label: "Recetas", icon: ClipboardPlus },
+    { id: "contactos", label: "Contactos", icon: Contact },
   ],
   admin: [
     { id: "inicio", label: "Inicio", icon: LayoutDashboard },
     { id: "pacientes", label: "Pacientes", icon: Users },
     { id: "turnos", label: "Turnos", icon: CalendarDays },
     { id: "agenda", label: "Agenda", icon: CalendarDays },
+    { id: "estadisticas", label: "Estadísticas", icon: BarChart3 },
     { id: "obras", label: "Obras sociales", icon: ClipboardPlus },
     { id: "profesionales", label: "Profesionales", icon: Stethoscope },
     { id: "permisos", label: "Permisos", icon: Shield },
@@ -146,6 +165,16 @@ export function PanelApp() {
     };
   }, []);
 
+  // Polling: cuando un paciente pide turno, le "salta" a la doctora y a la secretaría
+  useEffect(() => {
+    if (!data) return;
+    if (data.me.role === "paciente") return;
+    const id = window.setInterval(() => {
+      void refresh().catch(() => {});
+    }, 8000);
+    return () => window.clearInterval(id);
+  }, [data?.me.role]);
+
   async function run(action: () => Promise<{ ok: true; data: Snapshot } | { ok: false; error: string }>, success: string) {
     setNotice(null);
     try {
@@ -190,7 +219,7 @@ export function PanelApp() {
   const active = items.some((item) => item.id === section) ? section : "inicio";
 
   return (
-    <div className="min-h-screen bg-foam text-ink md:grid md:grid-cols-[16rem_1fr]">
+    <div data-role={data.me.role} className="min-h-screen bg-foam text-ink md:grid md:grid-cols-[16rem_1fr]">
       <aside className={`${open ? "fixed inset-0 z-30 flex" : "hidden"} bg-pine/40 md:static md:block md:bg-transparent`}>
         <div className="flex h-full w-64 flex-col bg-pine p-4 text-foam md:w-auto">
           <div className="mb-6 flex items-center justify-between gap-2">
@@ -247,6 +276,7 @@ export function PanelApp() {
           {active === "obras" ? <Obras data={data} onRun={run} /> : null}
           {active === "historial" ? <History data={data} onRun={run} /> : null}
           {active === "agenda" ? <Agenda data={data} onRun={run} /> : null}
+          {active === "estadisticas" ? <Estadisticas data={data} /> : null}
           {active === "profesionales" ? <Profesionales data={data} /> : null}
           {active === "recetas" ? <Recetas data={data} onRun={run} /> : null}
           {active === "contactos" ? <Contactos data={data} onRun={run} /> : null}
@@ -306,60 +336,185 @@ function Stat({ label, value }: { label: string; value: number }) {
 }
 
 function Home({ data }: { data: Snapshot }) {
-  const todayRows = data.turnos.filter((turno) => turno.fecha === data.today && turno.estado !== "Cancelado");
-  const pending = data.turnos.filter((turno) => turno.estado === "Pendiente" || turno.estado === "Confirmado");
-  const attended = data.turnos.filter((turno) => turno.estado === "Atendido");
+  // Profesional: prioriza sus propios turnos; secretaría/admin ven todos
+  const scope =
+    data.me.role === "profesional"
+      ? data.turnos.filter((t) => t.professionalUserId === data.me.userId)
+      : data.turnos;
+
+  const todayRows = scope
+    .filter((turno) => turno.fecha === data.today && turno.estado !== "Cancelado")
+    .sort((a, b) => a.hora.localeCompare(b.hora));
+  const pendingToday = todayRows.filter((t) => t.estado === "Pendiente");
+  const confirmedToday = todayRows.filter((t) => t.estado === "Confirmado");
+  const attendedToday = todayRows.filter((t) => t.estado === "Atendido");
+  const pendingAll = scope.filter((turno) => turno.estado === "Pendiente");
   const next = [...data.turnos]
     .filter((turno) => turno.fecha >= data.today && turno.estado !== "Cancelado" && turno.estado !== "Atendido")
     .sort((a, b) => `${a.fecha}${a.hora}`.localeCompare(`${b.fecha}${b.hora}`))[0];
+
+  const isStaff = data.me.role === "profesional" || data.me.role === "secretaria" || data.me.role === "admin";
+  const nuevos = isStaff ? pendingAll.filter((t) => t.fecha >= data.today) : [];
+
   return (
     <section className="space-y-4">
-      <h2 className="text-3xl text-pine">Hoy</h2>
-      <div className="grid gap-3 sm:grid-cols-3">
+      <h2 className="text-3xl text-pine">
+        {data.me.role === "paciente"
+          ? "Portal del paciente"
+          : data.me.role === "profesional"
+            ? "Mi agenda de hoy"
+            : "Agenda de hoy"}
+      </h2>
+
+      {/* Banner: turnos nuevos pedidos por pacientes → doctora y secretaría */}
+      {nuevos.length > 0 ? (
+        <div className="alert-nuevo" role="status">
+          <span className="text-2xl" aria-hidden="true">🔔</span>
+          <div className="min-w-0 flex-1">
+            <p className="font-bold text-amber-900">
+              {nuevos.length === 1
+                ? "¡Nuevo turno solicitado!"
+                : `¡${nuevos.length} turnos pendientes de confirmar!`}
+            </p>
+            <p className="text-sm text-amber-800">
+              {nuevos
+                .slice(0, 3)
+                .map((t) => `${t.patientName} (${t.fecha} ${t.hora})`)
+                .join(" · ")}
+              {nuevos.length > 3 ? ` y ${nuevos.length - 3} más` : ""}
+            </p>
+          </div>
+          <span className="badge badge-nuevo">NUEVO</span>
+        </div>
+      ) : null}
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Stat label="Turnos de hoy" value={todayRows.length} />
-        <Stat label="Pendientes o confirmados" value={pending.length} />
-        <Stat label="Atendidos" value={attended.length} />
+        <Stat label="Pendientes" value={pendingToday.length} />
+        <Stat label="Confirmados" value={confirmedToday.length} />
+        <Stat label="Atendidos hoy" value={attendedToday.length} />
       </div>
+
       {data.me.role === "paciente" ? (
-        next ? (
-          <article className="rounded-2xl border border-line bg-card p-4">
-            <p className="text-sm text-muted">Próximo turno</p>
-            <p className="font-display text-2xl text-pine">{next.fecha} · {next.hora}</p>
-            <p className="text-sm">{next.professionalName} · {next.motivo} · {next.estado}</p>
-          </article>
-        ) : (
-          <p className="rounded-2xl border border-dashed border-line px-4 py-8 text-center text-sm text-muted">
-            No tiene turnos próximos. Puede pedir uno cuando quiera.
+        <div className="space-y-3">
+          <p className="text-sm text-muted">
+            Hola, <span className="font-semibold text-pine">{data.me.name}</span>. Desde acá podés ver y pedir turnos, y actualizar tus datos.
           </p>
-        )
+          {next ? (
+            <article className="rounded-2xl border-2 border-leaf bg-mint p-4">
+              <p className="text-sm font-semibold text-pine">Próximo turno</p>
+              <p className="font-display text-2xl text-pine">
+                {next.fecha} · {next.hora}
+              </p>
+              <p className="text-sm">
+                {next.professionalName} · {next.motivo}
+              </p>
+              <div className="mt-2">
+                <EstadoBadge estado={next.estado} />
+              </div>
+            </article>
+          ) : (
+            <p className="rounded-2xl border border-dashed border-line px-4 py-8 text-center text-sm text-muted">
+              No tenés turnos próximos. Usá <strong>Pedir turno</strong> en el menú para solicitar uno.
+            </p>
+          )}
+          <div className="grid gap-3 sm:grid-cols-3">
+            <article className="rounded-2xl border border-line bg-card px-4 py-3">
+              <p className="text-sm text-muted">Mis turnos activos</p>
+              <p className="font-display text-2xl text-pine tabular-nums">
+                {data.turnos.filter((t) => t.estado === "Pendiente" || t.estado === "Confirmado").length}
+              </p>
+            </article>
+            <article className="rounded-2xl border border-line bg-card px-4 py-3">
+              <p className="text-sm text-muted">Atendidos</p>
+              <p className="font-display text-2xl text-pine tabular-nums">
+                {data.turnos.filter((t) => t.estado === "Atendido").length}
+              </p>
+            </article>
+            <article className="rounded-2xl border border-line bg-card px-4 py-3">
+              <p className="text-sm text-muted">Cancelados</p>
+              <p className="font-display text-2xl text-pine tabular-nums">
+                {data.turnos.filter((t) => t.estado === "Cancelado").length}
+              </p>
+            </article>
+          </div>
+        </div>
       ) : todayRows.length === 0 ? (
         <p className="rounded-2xl border border-dashed border-line px-4 py-8 text-center text-sm text-muted">
           No hay turnos cargados para hoy.
         </p>
       ) : (
-        <TurnoCards rows={todayRows} />
+        <div className="space-y-2">
+          <h3 className="text-sm font-bold uppercase tracking-wide text-muted">Turnos de hoy</h3>
+          <TurnoCards rows={todayRows} highlightPending />
+        </div>
       )}
     </section>
   );
 }
 
-function TurnoCards({ rows }: { rows: Turno[] }) {
+function TurnoCards({ rows, highlightPending }: { rows: Turno[]; highlightPending?: boolean }) {
   if (rows.length === 0) {
-    return <p className="rounded-2xl border border-dashed border-line px-4 py-8 text-center text-sm text-muted">No hay turnos para mostrar.</p>;
+    return (
+      <p className="rounded-2xl border border-dashed border-line px-4 py-8 text-center text-sm text-muted">
+        No hay turnos para mostrar.
+      </p>
+    );
   }
   return (
     <ul className="space-y-2">
-      {rows.map((turno) => (
-        <li key={turno.id} className="rounded-2xl border border-line bg-card px-4 py-3">
-          <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <p className="font-semibold">{turno.patientName}</p>
-            <p className="text-sm tabular-nums text-muted">{turno.fecha} · {turno.hora}</p>
-          </div>
-          <p className="text-sm text-muted">{turno.professionalName} · {turno.motivo} · {turno.estado}</p>
-        </li>
-      ))}
+      {rows.map((turno) => {
+        const isNew = highlightPending && turno.estado === "Pendiente";
+        return (
+          <li
+            key={turno.id}
+            className={`rounded-2xl border bg-card px-4 py-3 ${
+              isNew ? "border-amber-400 bg-amber-50" : "border-line"
+            }`}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0">
+                <p className="font-semibold">{turno.patientName}</p>
+                <p className="text-sm text-muted">
+                  {turno.hora}
+                  {turno.motivo ? ` · ${turno.motivo}` : ""}
+                  {turno.professionalName ? ` · ${turno.professionalName}` : ""}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {isNew ? <span className="badge badge-nuevo">NUEVO</span> : null}
+                <span
+                  className={`badge ${
+                    turno.estado === "Pendiente"
+                      ? "badge-pendiente"
+                      : turno.estado === "Confirmado"
+                        ? "badge-confirmado"
+                        : turno.estado === "Atendido"
+                          ? "badge-atendido"
+                          : "badge-cancelado"
+                  }`}
+                >
+                  {turno.estado}
+                </span>
+              </div>
+            </div>
+          </li>
+        );
+      })}
     </ul>
   );
+}
+
+function EstadoBadge({ estado }: { estado: string }) {
+  const cls =
+    estado === "Pendiente"
+      ? "badge-pendiente"
+      : estado === "Confirmado"
+        ? "badge-confirmado"
+        : estado === "Atendido"
+          ? "badge-atendido"
+          : "badge-cancelado";
+  return <span className={`badge ${cls}`}>{estado}</span>;
 }
 
 function TurnoList({
@@ -370,65 +525,118 @@ function TurnoList({
   onRun: (action: () => Promise<{ ok: true; data: Snapshot } | { ok: false; error: string }>, success: string) => Promise<void>;
 }) {
   const [busy, setBusy] = useState<number | null>(null);
+  const [q, setQ] = useState("");
+  const [filtroEstado, setFiltroEstado] = useState("todos");
+  const [soloHoy, setSoloHoy] = useState(false);
   const mine = data.me.role === "paciente";
+  const isStaff = !mine;
+
+  const rows = useMemo(() => {
+    let list = [...data.turnos];
+    if (soloHoy) list = list.filter((t) => t.fecha === data.today);
+    if (filtroEstado !== "todos") list = list.filter((t) => t.estado === filtroEstado);
+    if (q.trim()) {
+      const s = q.trim().toLowerCase();
+      list = list.filter(
+        (t) =>
+          t.patientName.toLowerCase().includes(s) ||
+          t.professionalName.toLowerCase().includes(s) ||
+          t.motivo.toLowerCase().includes(s) ||
+          t.fecha.includes(s),
+      );
+    }
+    list.sort((a, b) => `${a.fecha}${a.hora}`.localeCompare(`${b.fecha}${b.hora}`));
+    return list;
+  }, [data.turnos, data.today, q, filtroEstado, soloHoy]);
+
+  const pendientesNuevos = isStaff ? data.turnos.filter((t) => t.estado === "Pendiente" && t.fecha >= data.today).length : 0;
+
+  function setEstado(id: number, estado: "Pendiente" | "Confirmado" | "Atendido" | "Cancelado", msg: string) {
+    setBusy(id);
+    void onRun(() => setAppointmentEstadoFn({ data: { id, estado } }), msg).finally(() => setBusy(null));
+  }
+
   return (
     <section className="space-y-3">
-      <h2 className="text-3xl text-pine">{mine ? "Mis turnos" : "Turnos"}</h2>
-      {data.turnos.length === 0 ? (
-        <p className="rounded-2xl border border-dashed border-line px-4 py-8 text-center text-sm text-muted">Todavía no hay turnos guardados.</p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-3xl text-pine">{mine ? "Mis turnos" : "Turnos"}</h2>
+        {pendientesNuevos > 0 ? (
+          <span className="badge badge-nuevo">{pendientesNuevos} nuevos</span>
+        ) : null}
+      </div>
+
+      {isStaff ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-line bg-card p-3">
+          <input
+            className="field max-w-xs"
+            placeholder="Buscar paciente, motivo…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+          <select className="field max-w-[10rem]" value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)}>
+            <option value="todos">Todos los estados</option>
+            <option value="Pendiente">Pendiente</option>
+            <option value="Confirmado">Confirmado</option>
+            <option value="Atendido">Atendido</option>
+            <option value="Cancelado">Cancelado</option>
+          </select>
+          <label className="flex items-center gap-2 text-sm font-medium">
+            <input type="checkbox" checked={soloHoy} onChange={(e) => setSoloHoy(e.target.checked)} />
+            Solo hoy
+          </label>
+          <span className="ml-auto text-xs text-muted">{rows.length} turnos</span>
+        </div>
+      ) : null}
+
+      {rows.length === 0 ? (
+        <p className="rounded-2xl border border-dashed border-line px-4 py-8 text-center text-sm text-muted">
+          {data.turnos.length === 0 ? "Todavía no hay turnos guardados." : "Ningún turno coincide con el filtro."}
+        </p>
       ) : (
         <ul className="space-y-2">
-          {data.turnos.map((turno) => (
-            <li key={turno.id} className="rounded-2xl border border-line bg-card px-4 py-3">
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <p className="font-semibold">{mine ? turno.professionalName : turno.patientName}</p>
-                <p className="text-sm tabular-nums">{turno.fecha} · {turno.hora}</p>
-              </div>
-              <p className="text-sm text-muted">{turno.motivo} · {turno.estado}{mine ? "" : ` · ${turno.professionalName}`}</p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {mine && turno.estado === "Pendiente" && allowed(data, "pac_turnos_editar") ? (
-                  <Action
-                    label="Confirmar asistencia"
-                    busy={busy === turno.id}
-                    onClick={() => {
-                      setBusy(turno.id);
-                      void onRun(() => setAppointmentEstadoFn({ data: { id: turno.id, estado: "Confirmado" } }), "Asistencia confirmada.").finally(() => setBusy(null));
-                    }}
-                  />
-                ) : null}
-                {mine && (turno.estado === "Pendiente" || turno.estado === "Confirmado") && turno.fecha >= data.today ? (
-                  <Action
-                    label="Cancelar"
-                    busy={busy === turno.id}
-                    onClick={() => {
-                      setBusy(turno.id);
-                      void onRun(() => setAppointmentEstadoFn({ data: { id: turno.id, estado: "Cancelado" } }), "Turno cancelado.").finally(() => setBusy(null));
-                    }}
-                  />
-                ) : null}
-                {!mine && turno.estado !== "Cancelado" && turno.estado !== "Atendido" ? (
-                  <Action
-                    label="Marcar atendido"
-                    busy={busy === turno.id}
-                    onClick={() => {
-                      setBusy(turno.id);
-                      void onRun(() => setAppointmentEstadoFn({ data: { id: turno.id, estado: "Atendido" } }), "Turno marcado como atendido.").finally(() => setBusy(null));
-                    }}
-                  />
-                ) : null}
-                {!mine && turno.estado !== "Cancelado" ? (
-                  <Action
-                    label="Cancelar"
-                    busy={busy === turno.id}
-                    onClick={() => {
-                      setBusy(turno.id);
-                      void onRun(() => setAppointmentEstadoFn({ data: { id: turno.id, estado: "Cancelado" } }), "Turno cancelado.").finally(() => setBusy(null));
-                    }}
-                  />
-                ) : null}
-              </div>
-            </li>
-          ))}
+          {rows.map((turno) => {
+            const isNew = isStaff && turno.estado === "Pendiente" && turno.fecha >= data.today;
+            return (
+              <li
+                key={turno.id}
+                className={`rounded-2xl border bg-card px-4 py-3 ${isNew ? "border-amber-400 bg-amber-50" : "border-line"}`}
+              >
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="font-semibold">
+                      {mine ? turno.professionalName : turno.patientName}
+                    </p>
+                    <p className="text-sm tabular-nums text-muted">
+                      {turno.fecha} · {turno.hora}
+                      {turno.motivo ? ` · ${turno.motivo}` : ""}
+                      {!mine && turno.professionalName ? ` · ${turno.professionalName}` : ""}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {isNew ? <span className="badge badge-nuevo">NUEVO</span> : null}
+                    <EstadoBadge estado={turno.estado} />
+                  </div>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {mine && turno.estado === "Pendiente" && allowed(data, "pac_turnos_editar") ? (
+                    <Action label="Confirmar asistencia" busy={busy === turno.id} onClick={() => setEstado(turno.id, "Confirmado", "Asistencia confirmada.")} />
+                  ) : null}
+                  {mine && (turno.estado === "Pendiente" || turno.estado === "Confirmado") && turno.fecha >= data.today ? (
+                    <Action label="Cancelar" busy={busy === turno.id} onClick={() => setEstado(turno.id, "Cancelado", "Turno cancelado.")} />
+                  ) : null}
+                  {isStaff && turno.estado === "Pendiente" ? (
+                    <Action label="Confirmar" busy={busy === turno.id} onClick={() => setEstado(turno.id, "Confirmado", "Turno confirmado.")} />
+                  ) : null}
+                  {isStaff && turno.estado !== "Cancelado" && turno.estado !== "Atendido" ? (
+                    <Action label="Marcar atendido" busy={busy === turno.id} onClick={() => setEstado(turno.id, "Atendido", "Turno marcado como atendido.")} />
+                  ) : null}
+                  {isStaff && turno.estado !== "Cancelado" ? (
+                    <Action label="Cancelar" busy={busy === turno.id} onClick={() => setEstado(turno.id, "Cancelado", "Turno cancelado.")} />
+                  ) : null}
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
     </section>
@@ -451,7 +659,7 @@ function Book({
   onRun: (action: () => Promise<{ ok: true; data: Snapshot } | { ok: false; error: string }>, success: string) => Promise<void>;
 }) {
   const [prof, setProf] = useState(data.profesionales[0]?.userId ?? "");
-  const [fecha, setFecha] = useState("");
+  const [fecha, setFecha] = useState(data.today);
   const [hora, setHora] = useState("");
   const [motivo, setMotivo] = useState("Consulta");
   const [observaciones, setObservaciones] = useState("");
@@ -462,85 +670,164 @@ function Book({
       .filter((turno) => turno.professionalUserId === prof && turno.fecha === fecha && turno.estado !== "Cancelado")
       .map((turno) => turno.hora),
   );
+  const marked = useMemo(() => {
+    const set = new Set<string>();
+    for (const t of data.turnos) {
+      if (t.professionalUserId === prof && t.estado !== "Cancelado") set.add(t.fecha);
+    }
+    return set;
+  }, [data.turnos, prof]);
   const staff = data.me.role !== "paciente";
+  const profName = data.profesionales.find((p) => p.userId === prof)?.nombre ?? "";
+  const freeSlots = SLOT_HOURS.filter((s) => fecha && isWeekday(fecha) && !taken.has(s));
+
   return (
     <section className="space-y-4">
-      <h2 className="text-3xl text-pine">Reservar turno</h2>
-      <form
-        className="grid gap-3 rounded-2xl border border-line bg-card p-4 md:grid-cols-2"
-        onSubmit={(event) => {
-          event.preventDefault();
-          setBusy(true);
-          void onRun(
-            () =>
-              saveAppointmentFn({
-                data: {
-                  patientId: staff ? patientId : data.me.patientId,
-                  professionalUserId: prof,
-                  fecha,
-                  hora,
-                  motivo,
-                  observaciones,
-                },
-              }),
-            "El turno quedó guardado.",
-          ).finally(() => setBusy(false));
-        }}
-      >
-        {staff ? (
-          <label className="text-sm font-medium md:col-span-2">
-            Paciente
-            <select className="field mt-1" value={patientId} onChange={(e) => setPatientId(Number(e.target.value))}>
-              {data.patients.map((patient) => (
-                <option key={patient.id} value={patient.id}>{patient.nombre} · {patient.dni}</option>
+      <h2 className="text-3xl text-pine">{staff ? "Cargar turno" : "Pedir turno"}</h2>
+      <p className="text-sm text-muted">
+        {staff
+          ? "Elegí paciente, profesional, día y horario disponible."
+          : "Elegí profesional, día y un horario libre. El turno queda pendiente hasta que lo confirmen en recepción."}
+      </p>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="space-y-3">
+          <label className="block text-sm font-medium">
+            Profesional
+            <select
+              className="field mt-1"
+              value={prof}
+              onChange={(e) => {
+                setProf(e.target.value);
+                setHora("");
+              }}
+              required
+            >
+              {data.profesionales.map((item) => (
+                <option key={item.userId} value={item.userId}>
+                  {item.nombre} · {item.specialty || "General"}
+                </option>
               ))}
             </select>
           </label>
-        ) : null}
-        <label className="text-sm font-medium md:col-span-2">
-          Profesional
-          <select className="field mt-1" value={prof} onChange={(e) => setProf(e.target.value)} required>
-            {data.profesionales.map((item) => (
-              <option key={item.userId} value={item.userId}>{item.nombre} · {item.specialty}</option>
-            ))}
-          </select>
-        </label>
-        <label className="text-sm font-medium">
-          Fecha
-          <input className="field mt-1" type="date" required value={fecha} min={data.today} onChange={(e) => { setFecha(e.target.value); setHora(""); }} />
-        </label>
-        <label className="text-sm font-medium">
-          Motivo
-          <input className="field mt-1" value={motivo} onChange={(e) => setMotivo(e.target.value)} required />
-        </label>
-        <div className="md:col-span-2">
-          <p className="text-sm font-medium">Horario</p>
-          <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-5">
-            {SLOT_HOURS.map((slot) => {
-              const blocked = !fecha || !isWeekday(fecha) || taken.has(slot);
-              return (
-                <button
-                  key={slot}
-                  type="button"
-                  disabled={blocked}
-                  onClick={() => setHora(slot)}
-                  className={`h-11 rounded-xl text-sm font-semibold tabular-nums ${hora === slot ? "bg-pine text-foam" : "border border-line"} disabled:opacity-40`}
-                >
-                  {slot}
-                </button>
-              );
-            })}
-          </div>
-          {fecha && !isWeekday(fecha) ? <p className="mt-2 text-sm text-danger">Los sábados y domingos no hay agenda.</p> : null}
+          <Month
+            fecha={fecha}
+            marked={marked}
+            onPick={(iso) => {
+              if (iso < data.today) return;
+              setFecha(iso);
+              setHora("");
+            }}
+          />
         </div>
-        <label className="text-sm font-medium md:col-span-2">
-          Observaciones
-          <textarea className="field-area mt-1" value={observaciones} onChange={(e) => setObservaciones(e.target.value)} />
-        </label>
-        <button type="submit" disabled={busy || !hora || data.profesionales.length === 0} className="h-11 rounded-xl bg-pine font-semibold text-foam disabled:opacity-60 md:col-span-2">
-          {busy ? "Guardando…" : "Confirmar reserva"}
-        </button>
-      </form>
+
+        <form
+          className="space-y-3 rounded-2xl border border-line bg-card p-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!hora || !fecha) return;
+            setBusy(true);
+            void onRun(
+              () =>
+                saveAppointmentFn({
+                  data: {
+                    patientId: staff ? patientId : data.me.patientId,
+                    professionalUserId: prof,
+                    fecha,
+                    hora,
+                    motivo,
+                    observaciones,
+                  },
+                }),
+              staff ? "El turno quedó guardado." : "Turno solicitado. Quedó pendiente de confirmación.",
+            ).finally(() => {
+              setBusy(false);
+              setHora("");
+            });
+          }}
+        >
+          {staff ? (
+            <label className="block text-sm font-medium">
+              Paciente
+              <select className="field mt-1" value={patientId} onChange={(e) => setPatientId(Number(e.target.value))}>
+                {data.patients.map((patient) => (
+                  <option key={patient.id} value={patient.id}>
+                    {patient.nombre} · {patient.dni}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+
+          <div className="rounded-xl bg-mint px-3 py-2 text-sm">
+            <span className="font-semibold text-pine">Fecha elegida: </span>
+            <span className="tabular-nums">{fecha || "—"}</span>
+            {fecha && !isWeekday(fecha) ? (
+              <span className="ml-2 text-danger"> (fin de semana, sin agenda)</span>
+            ) : null}
+          </div>
+
+          <div>
+            <p className="text-sm font-medium">Horarios disponibles</p>
+            <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-4">
+              {SLOT_HOURS.map((slot) => {
+                const blocked = !fecha || !isWeekday(fecha) || taken.has(slot) || fecha < data.today;
+                return (
+                  <button
+                    key={slot}
+                    type="button"
+                    disabled={blocked}
+                    onClick={() => setHora(slot)}
+                    className={`h-11 rounded-xl text-sm font-semibold tabular-nums transition ${
+                      hora === slot
+                        ? "bg-pine text-foam ring-2 ring-leaf"
+                        : blocked
+                          ? "border border-line bg-foam opacity-40"
+                          : "border border-line hover:border-leaf hover:bg-mint"
+                    }`}
+                  >
+                    {slot}
+                  </button>
+                );
+              })}
+            </div>
+            {fecha && isWeekday(fecha) && freeSlots.length === 0 ? (
+              <p className="mt-2 text-sm text-danger">No quedan horarios libres ese día.</p>
+            ) : null}
+          </div>
+
+          <label className="block text-sm font-medium">
+            Motivo
+            <input className="field mt-1" value={motivo} onChange={(e) => setMotivo(e.target.value)} required />
+          </label>
+          <label className="block text-sm font-medium">
+            Observaciones
+            <textarea
+              className="field-area mt-1"
+              value={observaciones}
+              onChange={(e) => setObservaciones(e.target.value)}
+              placeholder="Opcional"
+            />
+          </label>
+
+          {hora && fecha ? (
+            <div className="rounded-xl border-2 border-leaf bg-mint px-3 py-2 text-sm">
+              <p className="font-semibold text-pine">Resumen</p>
+              <p>
+                {profName} · {fecha} · {hora} · {motivo}
+              </p>
+            </div>
+          ) : null}
+
+          <button
+            type="submit"
+            disabled={busy || !hora || !fecha || data.profesionales.length === 0}
+            className="h-12 w-full rounded-xl bg-pine font-semibold text-foam disabled:opacity-60"
+          >
+            {busy ? "Enviando…" : staff ? "Guardar turno" : "Solicitar turno"}
+          </button>
+        </form>
+      </div>
     </section>
   );
 }
@@ -836,27 +1123,61 @@ function History({
 }) {
   const [patientId, setPatientId] = useState(data.patients[0]?.id ?? 0);
   const [texto, setTexto] = useState("");
+  const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const notes = data.evoluciones.filter((item) => item.patientId === patientId);
   const patient = data.patients.find((item) => item.id === patientId);
+  const patientsFiltered = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    if (!s) return data.patients;
+    return data.patients.filter(
+      (p) => p.nombre.toLowerCase().includes(s) || p.dni.includes(s),
+    );
+  }, [data.patients, q]);
   return (
     <section className="space-y-3">
       <h2 className="text-3xl text-pine">Historia clínica</h2>
-      <label className="block text-sm font-medium">
-        Paciente
-        <select className="field mt-1" value={patientId} onChange={(e) => setPatientId(Number(e.target.value))}>
-          {data.patients.map((item) => (
-            <option key={item.id} value={item.id}>{item.nombre}</option>
-          ))}
-        </select>
-      </label>
-      {patient ? <p className="text-sm text-muted">DNI {patient.dni} · {patient.obraSocial}</p> : null}
-      {notes.length === 0 ? <p className="text-sm text-muted">Sin evoluciones cargadas.</p> : (
+      <div className="grid gap-2 md:grid-cols-2">
+        <input
+          className="field"
+          placeholder="Buscar paciente por nombre o DNI…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          aria-label="Buscar paciente"
+        />
+        <label className="block text-sm font-medium">
+          Paciente
+          <select className="field mt-1" value={patientId} onChange={(e) => setPatientId(Number(e.target.value))}>
+            {patientsFiltered.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.nombre} · DNI {item.dni}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      {patient ? (
+        <div className="rounded-2xl border border-line bg-mint px-4 py-3 text-sm">
+          <p className="font-semibold text-pine">{patient.nombre}</p>
+          <p className="text-muted">
+            DNI {patient.dni} · {patient.obraSocial || "Particular"}
+            {patient.planObra ? ` (${patient.planObra})` : ""}
+            {patient.phone ? ` · ${patient.phone}` : ""}
+          </p>
+        </div>
+      ) : null}
+      {notes.length === 0 ? (
+        <p className="rounded-2xl border border-dashed border-line px-4 py-6 text-center text-sm text-muted">
+          Sin evoluciones cargadas para este paciente.
+        </p>
+      ) : (
         <ul className="space-y-2">
           {notes.map((note) => (
             <li key={note.id} className="rounded-2xl border border-line bg-card px-4 py-3">
-              <p className="text-sm text-muted">{note.authorName} · {note.createdAt.slice(0, 16).replace("T", " ")}</p>
-              <p className="mt-1 text-sm">{note.texto}</p>
+              <p className="text-sm text-muted">
+                {note.authorName} · {note.createdAt.slice(0, 16).replace("T", " ")}
+              </p>
+              <p className="mt-1 text-sm whitespace-pre-wrap">{note.texto}</p>
             </li>
           ))}
         </ul>
@@ -881,16 +1202,246 @@ function History({
   );
 }
 
+function weekStartISO(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  const day = (dt.getUTCDay() + 6) % 7;
+  dt.setUTCDate(dt.getUTCDate() - day);
+  return dt.toISOString().slice(0, 10);
+}
+
+function addDaysISO(iso: string, n: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + n));
+  return dt.toISOString().slice(0, 10);
+}
+
 function Agenda({ data, onRun }: { data: Snapshot; onRun: Run }) {
   const [fecha, setFecha] = useState(data.today);
-  const rows = data.turnos.filter((turno) => turno.fecha === fecha);
-  const marked = useMemo(() => new Set(data.turnos.map((turno) => turno.fecha)), [data.turnos]);
+  const [vista, setVista] = useState<"semana" | "mes">("semana");
+  const scope =
+    data.me.role === "profesional"
+      ? data.turnos.filter((t) => t.professionalUserId === data.me.userId)
+      : data.turnos;
+  const rows = scope.filter((turno) => turno.fecha === fecha && turno.estado !== "Cancelado");
+  const marked = useMemo(() => new Set(scope.map((turno) => turno.fecha)), [scope]);
+  const start = weekStartISO(fecha);
+  const days = Array.from({ length: 7 }, (_, i) => addDaysISO(start, i));
+  const dayNames = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+
+  function shiftWeek(dir: number) {
+    setFecha(addDaysISO(fecha, dir * 7));
+  }
+
   return (
     <section className="space-y-4">
-      <h2 className="text-3xl text-pine">Agenda</h2>
-      <Month fecha={fecha} marked={marked} onPick={setFecha} />
-      <TurnoList data={{ ...data, turnos: rows }} onRun={onRun} />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-3xl text-pine">Agenda</h2>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            className={`h-10 rounded-xl px-3 text-sm font-semibold ${vista === "semana" ? "bg-pine text-foam" : "border border-line"}`}
+            onClick={() => setVista("semana")}
+          >
+            Semana
+          </button>
+          <button
+            type="button"
+            className={`h-10 rounded-xl px-3 text-sm font-semibold ${vista === "mes" ? "bg-pine text-foam" : "border border-line"}`}
+            onClick={() => setVista("mes")}
+          >
+            Mes
+          </button>
+        </div>
+      </div>
+
+      {vista === "semana" ? (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <button type="button" className="h-10 rounded-xl border border-line px-3" onClick={() => shiftWeek(-1)}>
+              ← Semana
+            </button>
+            <p className="text-sm font-semibold text-pine">
+              {start} → {addDaysISO(start, 6)}
+            </p>
+            <button type="button" className="h-10 rounded-xl border border-line px-3" onClick={() => shiftWeek(1)}>
+              Semana →
+            </button>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-7">
+            {days.map((iso, i) => {
+              const dayTurnos = scope
+                .filter((t) => t.fecha === iso && t.estado !== "Cancelado")
+                .sort((a, b) => a.hora.localeCompare(b.hora));
+              const isToday = iso === data.today;
+              const selected = iso === fecha;
+              return (
+                <button
+                  key={iso}
+                  type="button"
+                  onClick={() => setFecha(iso)}
+                  className={`min-h-[8rem] rounded-2xl border p-2 text-left ${
+                    selected ? "border-pine bg-mint" : isToday ? "border-leaf bg-card" : "border-line bg-card"
+                  }`}
+                >
+                  <p className="text-xs font-bold uppercase text-muted">
+                    {dayNames[i]} {iso.slice(8)}
+                  </p>
+                  {dayTurnos.length === 0 ? (
+                    <p className="mt-2 text-xs text-muted">Libre</p>
+                  ) : (
+                    <ul className="mt-1 space-y-1">
+                      {dayTurnos.slice(0, 5).map((t) => (
+                        <li
+                          key={t.id}
+                          className={`rounded-lg px-1.5 py-0.5 text-[11px] leading-tight ${
+                            t.estado === "Pendiente" ? "bg-amber-100 text-amber-900" : "bg-foam text-ink"
+                          }`}
+                        >
+                          <span className="font-semibold tabular-nums">{t.hora}</span> {t.patientName}
+                        </li>
+                      ))}
+                      {dayTurnos.length > 5 ? (
+                        <li className="text-[10px] text-muted">+{dayTurnos.length - 5} más</li>
+                      ) : null}
+                    </ul>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
+        <Month fecha={fecha} marked={marked} onPick={setFecha} />
+      )}
+
+      <div className="space-y-2">
+        <h3 className="text-sm font-bold uppercase tracking-wide text-muted">Detalle · {fecha}</h3>
+        <TurnoList data={{ ...data, turnos: rows }} onRun={onRun} />
+      </div>
       {data.me.role !== "paciente" ? <Book data={data} onRun={onRun} /> : null}
+    </section>
+  );
+}
+
+const CHART_COLORS = ["#0d3b24", "#0284c7", "#dc2626", "#d97706", "#7c3aed", "#059669"];
+
+function Estadisticas({ data }: { data: Snapshot }) {
+  const scope =
+    data.me.role === "profesional"
+      ? data.turnos.filter((t) => t.professionalUserId === data.me.userId)
+      : data.turnos;
+
+  const porEstado = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const t of scope) map[t.estado] = (map[t.estado] ?? 0) + 1;
+    return Object.entries(map).map(([name, value]) => ({ name, value }));
+  }, [scope]);
+
+  const porMotivo = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const t of scope) {
+      const m = t.motivo?.trim() || "Sin motivo";
+      map[m] = (map[m] ?? 0) + 1;
+    }
+    return Object.entries(map)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 8);
+  }, [scope]);
+
+  const porDia = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const t of scope) {
+      if (t.estado === "Cancelado") continue;
+      map[t.fecha] = (map[t.fecha] ?? 0) + 1;
+    }
+    return Object.entries(map)
+      .map(([name, value]) => ({ name: name.slice(5), value }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(-14);
+  }, [scope]);
+
+  const total = scope.length;
+  const atendidos = scope.filter((t) => t.estado === "Atendido").length;
+  const pendientes = scope.filter((t) => t.estado === "Pendiente").length;
+  const confirmados = scope.filter((t) => t.estado === "Confirmado").length;
+  const cancelados = scope.filter((t) => t.estado === "Cancelado").length;
+
+  return (
+    <section className="space-y-4">
+      <h2 className="text-3xl text-pine">Estadísticas</h2>
+      <p className="text-sm text-muted">
+        {data.me.role === "profesional" ? "Resumen de tus turnos." : "Resumen general del consultorio."}
+      </p>
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <Stat label="Total turnos" value={total} />
+        <Stat label="Pendientes" value={pendientes} />
+        <Stat label="Confirmados" value={confirmados} />
+        <Stat label="Atendidos" value={atendidos} />
+        <Stat label="Cancelados" value={cancelados} />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <article className="rounded-2xl border border-line bg-card p-4">
+          <h3 className="mb-3 font-semibold text-pine">Por estado</h3>
+          {porEstado.length === 0 ? (
+            <p className="text-sm text-muted">Sin datos.</p>
+          ) : (
+            <div className="h-56">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={porEstado} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label>
+                    {porEstado.map((_, i) => (
+                      <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </article>
+
+        <article className="rounded-2xl border border-line bg-card p-4">
+          <h3 className="mb-3 font-semibold text-pine">Turnos por día (últimos)</h3>
+          {porDia.length === 0 ? (
+            <p className="text-sm text-muted">Sin datos.</p>
+          ) : (
+            <div className="h-56">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={porDia}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--color-line)" />
+                  <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                  <Tooltip />
+                  <Bar dataKey="value" fill="var(--color-leaf)" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </article>
+      </div>
+
+      <article className="rounded-2xl border border-line bg-card p-4">
+        <h3 className="mb-3 font-semibold text-pine">Motivos de consulta (top)</h3>
+        {porMotivo.length === 0 ? (
+          <p className="text-sm text-muted">Sin datos.</p>
+        ) : (
+          <div className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={porMotivo} layout="vertical" margin={{ left: 20 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--color-line)" />
+                <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11 }} />
+                <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 11 }} />
+                <Tooltip />
+                <Bar dataKey="value" fill="var(--color-pine)" radius={[0, 6, 6, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </article>
     </section>
   );
 }
@@ -963,29 +1514,59 @@ function Recetas({ data, onRun }: { data: Snapshot; onRun: Run }) {
   const [patientId, setPatientId] = useState(data.patients[0]?.id ?? 0);
   const [medicamento, setMedicamento] = useState("");
   const [indicaciones, setIndicaciones] = useState("");
+  const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const rows = data.recetas.filter((item) => item.patientId === patientId);
+  const patientsFiltered = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    if (!s) return data.patients;
+    return data.patients.filter(
+      (p) => p.nombre.toLowerCase().includes(s) || p.dni.includes(s),
+    );
+  }, [data.patients, q]);
   return (
     <section className="space-y-3">
       <h2 className="text-3xl text-pine">Recetas</h2>
-      <p className="text-sm text-muted">El registro queda en la ficha. La receta electrónica externa no forma parte de este sistema.</p>
-      <label className="block text-sm font-medium">Paciente
-        <select className="field mt-1" value={patientId} onChange={(e) => setPatientId(Number(e.target.value))}>
-          {data.patients.map((item) => <option key={item.id} value={item.id}>{item.nombre}</option>)}
-        </select>
-      </label>
-      {rows.length === 0 ? <p className="text-sm text-muted">Sin recetas registradas.</p> : (
+      <p className="text-sm text-muted">
+        El registro queda en la ficha del paciente. La receta electrónica oficial no forma parte de este sistema.
+      </p>
+      <div className="grid gap-2 md:grid-cols-2">
+        <input
+          className="field"
+          placeholder="Buscar paciente…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          aria-label="Buscar paciente"
+        />
+        <label className="block text-sm font-medium">
+          Paciente
+          <select className="field mt-1" value={patientId} onChange={(e) => setPatientId(Number(e.target.value))}>
+            {patientsFiltered.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.nombre} · DNI {item.dni}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      {rows.length === 0 ? (
+        <p className="rounded-2xl border border-dashed border-line px-4 py-6 text-center text-sm text-muted">
+          Sin recetas registradas para este paciente.
+        </p>
+      ) : (
         <ul className="space-y-2">
           {rows.map((item) => (
             <li key={item.id} className="rounded-2xl border border-line bg-card px-4 py-3 text-sm">
               <p className="font-semibold">{item.medicamento}</p>
-              <p className="text-muted">{item.indicaciones} · {item.authorName}</p>
+              <p className="text-muted">
+                {item.indicaciones} · {item.authorName} · {item.createdAt.slice(0, 10)}
+              </p>
             </li>
           ))}
         </ul>
       )}
       <form
-        className="space-y-2"
+        className="space-y-2 rounded-2xl border border-line bg-card p-4"
         onSubmit={(event) => {
           event.preventDefault();
           setBusy(true);
@@ -996,9 +1577,18 @@ function Recetas({ data, onRun }: { data: Snapshot; onRun: Run }) {
           });
         }}
       >
-        <label className="block text-sm font-medium">Medicamento<input className="field mt-1" value={medicamento} onChange={(e) => setMedicamento(e.target.value)} required /></label>
-        <label className="block text-sm font-medium">Indicaciones<textarea className="field-area mt-1" value={indicaciones} onChange={(e) => setIndicaciones(e.target.value)} /></label>
-        <button disabled={busy} className="h-11 rounded-xl bg-pine px-4 font-semibold text-foam" type="submit">{busy ? "Guardando…" : "Registrar"}</button>
+        <h3 className="text-lg text-pine">Nueva receta</h3>
+        <label className="block text-sm font-medium">
+          Medicamento
+          <input className="field mt-1" value={medicamento} onChange={(e) => setMedicamento(e.target.value)} required />
+        </label>
+        <label className="block text-sm font-medium">
+          Indicaciones
+          <textarea className="field-area mt-1" value={indicaciones} onChange={(e) => setIndicaciones(e.target.value)} />
+        </label>
+        <button disabled={busy} className="h-11 rounded-xl bg-pine px-4 font-semibold text-foam" type="submit">
+          {busy ? "Guardando…" : "Registrar receta"}
+        </button>
       </form>
     </section>
   );
@@ -1008,82 +1598,186 @@ function Contactos({ data, onRun }: { data: Snapshot; onRun: Run }) {
   const [nombre, setNombre] = useState("");
   const [rol, setRol] = useState("");
   const [telefono, setTelefono] = useState("");
+  const [email, setEmail] = useState("");
+  const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
+  const rows = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    if (!s) return data.contactos;
+    return data.contactos.filter(
+      (c) =>
+        c.nombre.toLowerCase().includes(s) ||
+        c.rol.toLowerCase().includes(s) ||
+        c.telefono.toLowerCase().includes(s) ||
+        (c.email || "").toLowerCase().includes(s),
+    );
+  }, [data.contactos, q]);
   return (
     <section className="space-y-3">
       <h2 className="text-3xl text-pine">Contactos</h2>
-      {data.contactos.length === 0 ? <p className="text-sm text-muted">Sin contactos.</p> : (
+      <input className="field" placeholder="Buscar contacto…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Buscar contactos" />
+      {rows.length === 0 ? (
+        <p className="rounded-2xl border border-dashed border-line px-4 py-8 text-center text-sm text-muted">
+          {data.contactos.length === 0 ? "Sin contactos cargados." : "Ningún contacto coincide."}
+        </p>
+      ) : (
         <ul className="space-y-2">
-          {data.contactos.map((item) => (
+          {rows.map((item) => (
             <li key={item.id} className="rounded-2xl border border-line bg-card px-4 py-3 text-sm">
               <p className="font-semibold">{item.nombre}</p>
-              <p className="text-muted">{item.rol} · {item.telefono} · {item.email}</p>
+              <p className="text-muted">
+                {item.rol || "—"} · {item.telefono || "sin tel."}
+                {item.email ? ` · ${item.email}` : ""}
+              </p>
             </li>
           ))}
         </ul>
       )}
       <form
-        className="grid gap-2 md:grid-cols-3"
+        className="grid gap-2 rounded-2xl border border-line bg-card p-4 md:grid-cols-2"
         onSubmit={(event) => {
           event.preventDefault();
           setBusy(true);
-          void onRun(() => saveContactoFn({ data: { nombre, rol, telefono } }), "Contacto guardado.").finally(() => {
+          void onRun(() => saveContactoFn({ data: { nombre, rol, telefono, email } }), "Contacto guardado.").finally(() => {
             setBusy(false);
             setNombre("");
             setRol("");
             setTelefono("");
+            setEmail("");
           });
         }}
       >
+        <h3 className="text-lg text-pine md:col-span-2">Nuevo contacto</h3>
         <input className="field" placeholder="Nombre" aria-label="Nombre del contacto" value={nombre} onChange={(e) => setNombre(e.target.value)} required />
-        <input className="field" placeholder="Rol" aria-label="Rol del contacto" value={rol} onChange={(e) => setRol(e.target.value)} />
+        <input className="field" placeholder="Rol / empresa" aria-label="Rol del contacto" value={rol} onChange={(e) => setRol(e.target.value)} />
         <input className="field" placeholder="Teléfono" aria-label="Teléfono del contacto" value={telefono} onChange={(e) => setTelefono(e.target.value)} />
-        <button disabled={busy} className="h-11 rounded-xl bg-pine font-semibold text-foam md:col-span-3" type="submit">{busy ? "Guardando…" : "Agregar contacto"}</button>
+        <input className="field" placeholder="Email" aria-label="Email del contacto" value={email} onChange={(e) => setEmail(e.target.value)} />
+        <button disabled={busy} className="h-11 rounded-xl bg-pine font-semibold text-foam md:col-span-2" type="submit">
+          {busy ? "Guardando…" : "Agregar contacto"}
+        </button>
       </form>
     </section>
   );
 }
 
 const PERM_LABEL: Record<string, string> = {
-  pac_turnos_ver: "Paciente ve sus turnos",
-  pac_turnos_agregar: "Paciente reserva turnos",
-  pac_turnos_editar: "Paciente confirma o cancela",
-  pac_datos_ver: "Paciente ve su ficha",
-  pac_datos_editar: "Paciente edita su ficha",
-  prof_agenda_ver: "Profesional ve la agenda",
-  prof_agenda_agregar: "Profesional crea turnos",
-  prof_agenda_editar: "Profesional cambia turnos",
+  pac_turnos_ver: "Ve sus turnos",
+  pac_turnos_agregar: "Reserva turnos",
+  pac_turnos_editar: "Confirma o cancela",
+  pac_datos_ver: "Ve su ficha",
+  pac_datos_editar: "Edita su ficha",
+  prof_agenda_ver: "Ve la agenda",
+  prof_agenda_agregar: "Crea turnos",
+  prof_agenda_editar: "Cambia turnos",
   prof_hc_ver: "Ver historia clínica",
   prof_hc_editar: "Escribir historia clínica",
-  sec_pacientes_ver: "Secretaría ve pacientes",
-  sec_pacientes_agregar: "Secretaría crea pacientes",
-  sec_pacientes_editar: "Secretaría edita pacientes",
-  sec_turnos_ver: "Secretaría ve turnos",
-  sec_turnos_agregar: "Secretaría crea turnos",
-  sec_turnos_editar: "Secretaría cambia turnos",
-  sec_obras_ver: "Ver obras sociales",
-  sec_obras_editar: "Editar obras sociales",
+  sec_pacientes_ver: "Ve pacientes",
+  sec_pacientes_agregar: "Crea pacientes",
+  sec_pacientes_editar: "Edita pacientes",
+  sec_turnos_ver: "Ve turnos",
+  sec_turnos_agregar: "Crea turnos",
+  sec_turnos_editar: "Cambia turnos",
+  sec_obras_ver: "Ve obras sociales",
+  sec_obras_editar: "Edita obras sociales",
 };
 
+const PERM_GROUPS: Array<{ title: string; prefix: string; color: string }> = [
+  { title: "Paciente", prefix: "pac_", color: "border-emerald-300" },
+  { title: "Profesional", prefix: "prof_", color: "border-sky-300" },
+  { title: "Secretaría", prefix: "sec_", color: "border-red-300" },
+];
+
 function Permisos({ data, onRun }: { data: Snapshot; onRun: Run }) {
+  const grouped = PERM_GROUPS.map((g) => ({
+    ...g,
+    items: data.permisos.filter((p) => p.clave.startsWith(g.prefix)),
+  }));
+  const otros = data.permisos.filter(
+    (p) => !PERM_GROUPS.some((g) => p.clave.startsWith(g.prefix)),
+  );
+  const activos = data.permisos.filter((p) => p.enabled).length;
+
   return (
-    <section className="space-y-3">
-      <h2 className="text-3xl text-pine">Permisos</h2>
-      <ul className="space-y-2">
-        {data.permisos.map((item) => (
-          <li key={item.clave} className="flex items-center justify-between gap-3 rounded-2xl border border-line bg-card px-4 py-3">
-            <span className="text-sm">{PERM_LABEL[item.clave] ?? item.clave}</span>
-            <button
-              type="button"
-              aria-pressed={item.enabled}
-              className={`h-10 rounded-xl px-3 text-sm font-semibold ${item.enabled ? "bg-mint text-pine" : "bg-danger-bg text-danger"}`}
-              onClick={() => void onRun(() => setPermisoFn({ data: { clave: item.clave, enabled: !item.enabled } }), "Permiso actualizado.")}
-            >
-              {item.enabled ? "Activo" : "Apagado"}
-            </button>
-          </li>
-        ))}
-      </ul>
+    <section className="space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="text-3xl text-pine">Permisos</h2>
+          <p className="text-sm text-muted">
+            Consola master · {activos}/{data.permisos.length} activos
+          </p>
+        </div>
+      </div>
+
+      {grouped.map((g) =>
+        g.items.length === 0 ? null : (
+          <article key={g.prefix} className={`rounded-2xl border-2 bg-card p-4 ${g.color}`}>
+            <h3 className="mb-3 font-semibold text-pine">{g.title}</h3>
+            <ul className="space-y-2">
+              {g.items.map((item) => (
+                <li
+                  key={item.clave}
+                  className="flex items-center justify-between gap-3 rounded-xl border border-line bg-foam px-3 py-2"
+                >
+                  <div>
+                    <p className="text-sm font-medium">{PERM_LABEL[item.clave] ?? item.clave}</p>
+                    <p className="text-xs text-muted">{item.clave}</p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={item.enabled}
+                    className={`relative h-8 w-14 shrink-0 rounded-full transition ${
+                      item.enabled ? "bg-leaf" : "bg-line"
+                    }`}
+                    onClick={() =>
+                      void onRun(
+                        () => setPermisoFn({ data: { clave: item.clave, enabled: !item.enabled } }),
+                        item.enabled ? "Permiso desactivado." : "Permiso activado.",
+                      )
+                    }
+                  >
+                    <span
+                      className={`absolute top-1 size-6 rounded-full bg-white shadow transition ${
+                        item.enabled ? "left-7" : "left-1"
+                      }`}
+                    />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </article>
+        ),
+      )}
+
+      {otros.length > 0 ? (
+        <article className="rounded-2xl border border-line bg-card p-4">
+          <h3 className="mb-3 font-semibold text-pine">Otros</h3>
+          <ul className="space-y-2">
+            {otros.map((item) => (
+              <li
+                key={item.clave}
+                className="flex items-center justify-between gap-3 rounded-xl border border-line bg-foam px-3 py-2"
+              >
+                <span className="text-sm">{PERM_LABEL[item.clave] ?? item.clave}</span>
+                <button
+                  type="button"
+                  className={`h-10 rounded-xl px-3 text-sm font-semibold ${
+                    item.enabled ? "bg-mint text-pine" : "bg-danger-bg text-danger"
+                  }`}
+                  onClick={() =>
+                    void onRun(
+                      () => setPermisoFn({ data: { clave: item.clave, enabled: !item.enabled } }),
+                      "Permiso actualizado.",
+                    )
+                  }
+                >
+                  {item.enabled ? "Activo" : "Apagado"}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </article>
+      ) : null}
     </section>
   );
 }
